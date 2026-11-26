@@ -6,6 +6,14 @@
         <p class="page-desc">{{ meta.desc }}</p>
       </div>
       <div class="page-actions">
+        <button v-if="meta.key === 'measure_catalog'" class="btn" data-testid="open-import"
+          type="button" @click="showImport = true">
+          导入度量登记表
+        </button>
+        <button v-if="meta.key === 'metric_bind'" class="btn" data-testid="open-candidates"
+          type="button" @click="showCandidates = !showCandidates">
+          {{ showCandidates ? '收起指标绑定候选' : '查看指标绑定候选' }}
+        </button>
         <button class="btn primary" data-testid="open-create" type="button" @click="openCreate">
           登记{{ meta.entity }}
         </button>
@@ -70,13 +78,30 @@
       </tbody>
     </table>
 
+    <p class="page-desc" v-if="meta.key === 'metric_bind'" data-testid="bind-hint">
+      引用度量只能选择真正登记成功的那一条；同编号多条表达式不同的导入登记需先在度量目录再次确认。
+    </p>
+
+    <CandidateBoard v-if="showCandidates" ref="candidateBoard" :import-id="rememberedImport()"
+      @confirmed="(message) => { errorMessage = message; void reload() }" />
+
     <div v-if="showCreate" class="modal-backdrop" data-testid="create-modal">
       <form class="modal" @submit.prevent="submitCreate">
         <h3>登记{{ meta.entity }}</h3>
         <label v-for="field in meta.fields" :key="field" class="create-field">
           <span>{{ field }}</span>
-          <input v-model="createValues[field]" :data-testid="`create-${field}`" required />
+          <select v-if="meta.key === 'metric_bind' && field === '引用度量'"
+            v-model="createValues[field]" :data-testid="`create-${field}`" required>
+            <option value="">请选择当前可采用的度量</option>
+            <option v-for="option in bindableOptions" :key="option.value" :value="option.value">
+              {{ option.label }}
+            </option>
+          </select>
+          <input v-else v-model="createValues[field]" :data-testid="`create-${field}`" required />
         </label>
+        <p v-if="meta.key === 'metric_bind'" class="hint" data-testid="bind-options-note">
+          可选引用 {{ bindableOptions.length }} 条，每个度量编号只露出当前可采用的一条。
+        </p>
         <div class="page-actions">
           <button class="btn" type="button" @click="showCreate = false">取消</button>
           <button class="btn primary" data-testid="submit-create" type="submit" :disabled="creating">
@@ -86,6 +111,8 @@
       </form>
     </div>
 
+    <MeasureImportDialog v-if="showImport" @close="showImport = false" @saved="reload" />
+
     <footer class="page-foot">
       <span>共 {{ total }} 条{{ meta.name }}记录</span>
       <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
@@ -94,8 +121,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 
+import CandidateBoard from '@/components/CandidateBoard.vue'
+import MeasureImportDialog from '@/components/MeasureImportDialog.vue'
 import {
   createEntry,
   downloadEntries,
@@ -103,6 +132,8 @@ import {
   moduleMeta,
   runAction as applyAction,
 } from '@/api/backend-service'
+import { loadBindableOptions } from '@/api/measure-import'
+import { rememberedImport } from '@/domain/measureImport'
 import type { EntryRow } from '@/data/types'
 
 const props = defineProps<{ moduleKey: string }>()
@@ -113,8 +144,12 @@ const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = meta.fields.slice(0, 3)
 const showCreate = ref(false)
+const showImport = ref(false)
+const showCandidates = ref(false)
+const candidateBoard = ref<InstanceType<typeof CandidateBoard> | null>(null)
 const creating = ref(false)
 const createValues = ref<Record<string, string>>({})
+const bindableOptions = ref<Awaited<ReturnType<typeof loadBindableOptions>>>([])
 const stats = computed(() => [
   { label: meta.metrics[0], value: total.value },
   { label: meta.metrics[1], value: rows.value.filter((row) => row.status === meta.statuses[1]).length },
@@ -148,6 +183,16 @@ function openCreate() {
   createValues.value = Object.fromEntries(meta.fields.map((field) => [field, '']))
   errorMessage.value = ''
   showCreate.value = true
+  if (meta.key === 'metric_bind') void loadOptions()
+}
+
+async function loadOptions() {
+  try {
+    bindableOptions.value = await loadBindableOptions()
+  } catch (error) {
+    bindableOptions.value = []
+    errorMessage.value = error instanceof Error ? error.message : '可选度量读取失败'
+  }
 }
 
 async function submitCreate() {
@@ -186,6 +231,13 @@ async function reload() {
     errorMessage.value = error instanceof Error ? error.message : '业务列表读取失败'
   }
 }
+
+watch(showCandidates, (visible) => {
+  if (visible) void candidateBoard.value?.reload()
+})
+watch(showCreate, (visible) => {
+  if (visible && meta.key === 'metric_bind') void loadOptions()
+})
 
 onMounted(reload)
 </script>

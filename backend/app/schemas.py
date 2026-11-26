@@ -29,3 +29,25 @@ class EntryPayload(BaseModel):
 class ActionPayload(BaseModel):
     action: str
     remark: str | None = None
+
+
+class ImportPreviewPayload(BaseModel):
+    filename: str = ""
+    # 浏览器读出的 CSV 原文（带或不带 BOM 均可）；rows 用于接口联调时直接给结构化行。
+    content: str | None = None
+    rows: list[dict[str, Any]] | None = None
+
+
+class ImportDecision(BaseModel):
+    row_no: int
+    decision: str | None = None
+    values: dict[str, Any] | None = None
+
+
+class ImportCommitPayload(BaseModel):
+    decisions: list[ImportDecision] = Field(default_factory=list)
+    remark: str | None = None
+
+
+class ImportConfirmPayload(BaseModel):
+    row_no: int

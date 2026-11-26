@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.services.base import BaseModuleService
+from app.services.measure_import import import_service
 from app.store import store
 
 
@@ -15,6 +16,39 @@ class MetricBindService(BaseModuleService):
     STATUS_ORDER = ["待生效", "生效中", "已替换", "已解除"]
     ACTION_RULES = {"启效绑定": "生效中", "替换绑定": "已替换", "解除绑定": "已解除"}
     NEGATIVE_ACTIONS = []
+
+    def create_entry(
+        self, values: dict[str, Any]
+    ) -> tuple[dict[str, Any] | None, list[str], str | None]:
+        """新建绑定前先确认引用度量是候选清单里当前可采用的登记。
+
+        引用可以是候选编号（MC-xxxx）或度量编号；同一编号有多条表达式
+        不同的导入登记且未再次确认时，拒绝绑定并提示等导入人确认。
+        """
+        reference = str(values.get("引用度量") or "").strip()
+        resolved, error = import_service.resolve_measure_reference(reference)
+        if resolved is None:
+            missing = ["引用度量"] if not reference else []
+            return None, missing, None if missing else error
+
+        entry, missing, domain_error = super().create_entry(values)
+        if entry is None:
+            return entry, missing, domain_error
+        if resolved["kind"] == "candidate":
+            candidate = resolved["candidate"]
+            # 绑定记录直接落到候选编号上，便于从候选清单反查被哪些指标引用。
+            entry["引用度量"] = candidate["候选编号"]
+            entry["引用度量条目ID"] = candidate["度量条目ID"]
+            entry["引用来源导入"] = candidate.get("来源导入", "")
+            import_service.record_binding(candidate, str(values.get("绑定编号")))
+        else:
+            entry["引用度量条目ID"] = resolved["measure"].get("id")
+            entry["引用来源导入"] = ""
+        return entry, [], None
+
+    def bindable_options(self) -> list[dict[str, Any]]:
+        """新建绑定时可选的度量：只露出当前真正可采用的那一条。"""
+        return import_service.candidates_board()["selectable"]
 
     def bind_metric(
         self, bind_id: str, metric_name: str, measure_ref: str,

@@ -43,13 +43,22 @@ class BaseModuleService:
     def get_entry(self, entry_id: int) -> dict[str, Any] | None:
         return store.find(self.MODULE, entry_id)
 
-    def create_entry(self, values: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
+    def create_entry(
+        self, values: dict[str, Any]
+    ) -> tuple[dict[str, Any] | None, list[str], str | None]:
+        """登记一条记录。
+
+        返回 (entry, missing, error)：
+        - missing 是缺失的必填字段，路由层拼成「缺少必填字段」；
+        - error 是领域校验给出的整句提示，路由层原样返回，避免把
+          「引用度量尚未登记成功」这类业务错误伪装成缺字段。
+        """
         missing = [
             field for field in self.REQUIRED_FIELDS
             if not str(values.get(field) or "").strip()
         ]
         if missing:
-            return None, missing
+            return None, missing, None
         rows = store.rows(self.MODULE)
         entry = {"id": max((int(row.get("id", 0)) for row in rows), default=0) + 1}
         entry.update({field: values.get(field) for field in self.LIST_FIELDS})
@@ -57,7 +66,7 @@ class BaseModuleService:
         entry["pending"] = True
         entry["abnormal"] = False
         rows.append(entry)
-        return entry, []
+        return entry, [], None
 
     def run_action(self, entry_id: int, action: str) -> tuple[dict[str, Any] | None, str]:
         entry = store.find(self.MODULE, entry_id)
